@@ -7,7 +7,8 @@ import axios from "axios";
 
 export default function Chat() {
   const [ws, setWs] = useState(null);
-  const [onlinePeople, setOnlinePeople] = useState([]);
+  const [onlinePeople, setOnlinePeople] = useState({});
+  const [offlinePeople, setOfflinePeople] = useState({});
   const [selectedUserId, setSelectedUserId] = useState();
   const { id } = useContext(UserContext);
   const [newMessageText, setNewMessageText] = useState("");
@@ -34,7 +35,7 @@ export default function Chat() {
   const onlinePeopleExclUser = { ...onlinePeople };
   delete onlinePeopleExclUser[id];
 
-  const messagesWithoutDupes = uniqBy(messages, "id");
+  const messagesWithoutDupes = uniqBy(messages, "_id");
 
   function sendMessage(ev) {
     ev.preventDefault();
@@ -51,14 +52,16 @@ export default function Chat() {
         text: newMessageText,
         sender: id,
         recipient: selectedUserId,
-        id: Date.now(),
+        _id: Date.now(),
       },
     ]);
   }
 
   useEffect(() => {
     if (selectedUserId) {
-      axios.get("/messages/" + selectedUserId);
+      axios.get("/messages/" + selectedUserId).then((res) => {
+        setMessages(res.data);
+      });
     }
   }, [selectedUserId]);
 
@@ -69,10 +72,34 @@ export default function Chat() {
     }
   }, [messages]);
 
-  useEffect(() => {
+  function connectToWs() {
     const ws = new WebSocket("ws://localhost:4000");
     setWs(ws);
     ws.addEventListener("message", handleMessage);
+    ws.addEventListener("close", () => {
+      setTimeout(() => {
+        console.log("Disconnected. Trying to reconnect.");
+        connectToWs();
+      }, 1000);
+    });
+  }
+
+  useEffect(() => {
+    axios.get("/people").then((res) => {
+      const offlinePeopleArr = res.data
+        .filter((p) => p._id !== id)
+        .filter((p) => !Object.keys(onlinePeople).includes(p._id));
+      const offlinePeople = {};
+      offlinePeopleArr.forEach((p) => {
+        offlinePeople[p._id] = p.username;
+      });
+      setOfflinePeople(offlinePeople);
+      console.log("offline people", offlinePeople);
+    });
+  }, [onlinePeople]);
+
+  useEffect(() => {
+    connectToWs();
   }, []);
   return (
     <div className="flex h-screen">
@@ -90,7 +117,11 @@ export default function Chat() {
               <div className="w-1 h-12 bg-blue-500 rounded-r-md"></div>
             )}
             <div className="flex py-2 px-4 gap-2 items-center">
-              <Avatar userId={userId} username={onlinePeople[userId]} />
+              <Avatar
+                userId={userId}
+                username={onlinePeople[userId]}
+                online={true}
+              />
               {onlinePeople[userId]}
             </div>
           </div>
@@ -108,9 +139,9 @@ export default function Chat() {
           {!!selectedUserId && (
             <div className="relative h-full">
               <div className="overflow-y-scroll absolute inset-0">
-                {messagesWithoutDupes.map((message, index) => (
+                {messagesWithoutDupes.map((message) => (
                   <div
-                    key={index}
+                    key={message._id}
                     className={`${
                       message.sender === id ? "text-right" : "text-left"
                     }`}
